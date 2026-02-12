@@ -23,49 +23,39 @@ def init_db():
     conn.commit()
     conn.close()
 
+# Helper function to show the board in multiple places
+def show_handover_board():
+    st.divider()
+    st.subheader("📋 Live Handover Board")
+    conn = sqlite3.connect(DB_FILE)
+    logs = conn.execute("SELECT engineer, message, timestamp FROM handover ORDER BY id DESC LIMIT 5").fetchall()
+    conn.close()
+    
+    if logs:
+        for l in logs:
+            st.markdown(f"""
+            <div style="background: white; padding: 15px; border-radius: 10px; border-left: 5px solid #ff4b4b; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 10px;">
+                <div style="color: #666; font-size: 0.8em;">{l[2]}</div>
+                <div style="color: #ff4b4b; font-weight: bold; font-size: 1.1em;">👷 {l[0]}</div>
+                <div style="color: #1c3d5a; margin-top: 5px; font-size: 1em;">{l[1]}</div>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.info("No active handover notes.")
+
 init_db()
 
 # --- APP CONFIG ---
 st.set_page_config(page_title="NotEMMA", page_icon="🏗️", layout="centered")
 
-# --- PREMIUM STYLING ---
+# --- GLOBAL STYLING ---
 st.markdown("""
     <style>
-    /* Global Background & Text */
     .stApp { background-color: #f0f2f6; }
-    h1, h2, h3, p, span, label { color: #1c3d5a !important; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-    
-    /* Metric Card Styling */
-    div[data-testid="stMetricValue"] { font-size: 28px; font-weight: bold; color: #ff4b4b; }
-    div[data-testid="metric-container"] {
-        background-color: white;
-        border-radius: 12px;
-        padding: 15px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-    }
-
-    /* Tab Customization */
-    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
-    .stTabs [data-baseweb="tab"] {
-        background-color: #ffffff !important;
-        border-radius: 8px 8px 0px 0px !important;
-        padding: 10px 20px !important;
-        border: 1px solid #e1e4e8 !important;
-    }
-    .stTabs [aria-selected="true"] {
-        border-bottom: 3px solid #ff4b4b !important;
-        color: #ff4b4b !important;
-    }
-
-    /* Handover Board Card */
-    .handover-card {
-        background: linear-gradient(135deg, #ffffff 0%, #f9f9f9 100%);
-        padding: 20px;
-        border-radius: 15px;
-        border-left: 6px solid #28a745;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-        margin-bottom: 15px;
-    }
+    /* Force all labels and text to be dark navy */
+    label, p, span, div { color: #1c3d5a !important; }
+    /* Fix for invisible numbers in inputs */
+    input { color: #1c3d5a !important; font-weight: bold !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -73,17 +63,15 @@ st.markdown("""
 if 'on_shift' not in st.session_state:
     st.session_state.on_shift = False
 
-# --- VIEW 1: LOGIN PAGE ---
+# --- VIEW 1: LANDING PAGE (Logged Out) ---
 if not st.session_state.on_shift:
     st.image("https://images.unsplash.com/photo-1581091226825-a6a2a5aee158?auto=format&fit=crop&q=80&w=800", use_container_width=True)
     st.title("🏗️ NotEMMA")
-    st.markdown("### *Site Engineering Intelligence*")
     
-    with st.expander("🔑 Secure Login", expanded=True):
+    with st.expander("🔐 Engineer Login", expanded=True):
         engineers = ["Select Name...", "Smiler", "Twig", "Gaz", "2 Hotty", "Iron Man", "Long hair", "Jackie Boy", "KP AP"]
         selected_user = st.selectbox("Identify yourself:", engineers)
         pin = st.text_input("PIN", type="password")
-        
         if st.button("🚀 START SHIFT", use_container_width=True, type="primary"):
             if selected_user != "Select Name..." and pin == "1234":
                 st.session_state.on_shift = True
@@ -91,64 +79,69 @@ if not st.session_state.on_shift:
                 st.rerun()
             else:
                 st.error("Invalid Credentials.")
+    
+    # READ-ONLY BOARD FOR LANDING PAGE
+    show_handover_board()
 
-# --- VIEW 2: DASHBOARD ---
+# --- VIEW 2: DASHBOARD (Logged In) ---
 else:
-    # --- TOP BAR STATS (The "Wow" Factor) ---
+    # Quick Stats
     conn = sqlite3.connect(DB_FILE)
-    today_date = datetime.now().strftime("%Y-%m-%d")
-    jobs_today = conn.execute("SELECT COUNT(*) FROM history WHERE timestamp LIKE ?", (f"{today_date}%",)).fetchone()[0]
-    total_ot = conn.execute("SELECT SUM(hours) FROM overtime WHERE engineer = ?", (st.session_state.current_user,)).fetchone()[0] or 0
+    today = datetime.now().strftime("%Y-%m-%d")
+    jobs_today = conn.execute("SELECT COUNT(*) FROM history WHERE timestamp LIKE ?", (f"{today}%",)).fetchone()[0]
     conn.close()
+    
+    st.metric("Jobs Completed (Site Today)", jobs_today)
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Jobs Completed (Site)", jobs_today)
-    with col2:
-        st.metric("Your Total OT (Hrs)", f"{total_ot:.1f}")
-
-    st.divider()
-
-    tab1, tab2, tab3, tab4 = st.tabs(["⚡ TASKS", "🕒 OVERTIME", "📝 HANDOVER", "📜 LOGS"])
+    tab1, tab2, tab3 = st.tabs(["⚡ TASKS", "⏰ OVERTIME", "📢 HANDOVER"])
 
     with tab1:
-        type_choice = st.radio("Choose Priority", ["PPM", "Reactive"], horizontal=True)
-        
+        type_choice = st.radio("Priority", ["PPM", "Reactive"], horizontal=True)
         if type_choice == "PPM":
             tasks = ["DRUPS testing", "Flushing", "Fire Door Inspection", "Sprinkler testing"]
-            st.info("💡 Scheduled Maintenance Mode")
         else:
             tasks = ["Change light fitting", "Change lock", "Change flush plate"]
-            st.warning("⚠️ Reactive Repair Mode")
             
-        task = st.selectbox("Select Asset", tasks)
-        action = st.segmented_control("Action taken:", ["Inspection", "Routine", "Repair"], default="Inspection")
-        notes = st.text_area("Engineer Notes", placeholder="Detail what was found and fixed...")
+        selected_job = st.selectbox("Select Asset", tasks)
         
+        # --- SPECIFIC JOB HISTORY ---
+        st.markdown(f"#### 📜 History for: {selected_job}")
+        conn = sqlite3.connect(DB_FILE)
+        job_history = conn.execute("SELECT engineer, action, notes, timestamp FROM history WHERE job = ? ORDER BY id DESC LIMIT 3", (selected_job,)).fetchall()
+        conn.close()
+        
+        if job_history:
+            for jh in job_history:
+                st.markdown(f"**{jh[3]}** - {jh[0]}: *{jh[1]}* <br> {jh[2]}", unsafe_allow_html=True)
+        else:
+            st.caption("No previous history for this asset.")
+        
+        st.divider()
+        action = st.radio("Action", ["Inspection", "Routine", "Repair"], horizontal=True)
+        notes = st.text_area("Notes")
         if st.button("✅ FINALIZE LOG", use_container_width=True):
             conn = sqlite3.connect(DB_FILE)
             conn.execute("INSERT INTO history (engineer, type, job, action, notes, timestamp) VALUES (?,?,?,?,?,?)",
-                      (st.session_state.current_user, type_choice, task, action, notes, datetime.now().strftime("%Y-%m-%d %H:%M")))
+                      (st.session_state.current_user, type_choice, selected_job, action, notes, datetime.now().strftime("%Y-%m-%d %H:%M")))
             conn.commit()
             conn.close()
-            st.success("Log submitted to cloud.")
+            st.success("Logged!")
+            st.rerun()
 
     with tab2:
-        st.subheader("Extra Hours Tracker")
         ot_hours = st.number_input("Hours", min_value=0.0, step=0.5)
-        ot_reason = st.text_input("Reason / Call-out Reference")
-        if st.button("💾 SAVE HOURS"):
+        ot_reason = st.text_input("Reason")
+        if st.button("💾 SAVE"):
             conn = sqlite3.connect(DB_FILE)
             conn.execute("INSERT INTO overtime (engineer, date, hours, reason) VALUES (?,?,?,?)",
-                      (st.session_state.current_user, today_date, ot_hours, ot_reason))
+                      (st.session_state.current_user, today, ot_hours, ot_reason))
             conn.commit()
             conn.close()
             st.balloons()
 
     with tab3:
-        st.subheader("Digital Handover Board")
-        msg = st.text_area("Broadcast message to the team", placeholder="E.g. Pump 2 is isolated...")
-        if st.button("📢 POST TO BOARD", use_container_width=True):
+        msg = st.text_area("Broadcast message")
+        if st.button("📢 POST", use_container_width=True):
             if msg:
                 conn = sqlite3.connect(DB_FILE)
                 conn.execute("INSERT INTO handover (engineer, message, timestamp) VALUES (?,?,?)",
@@ -156,32 +149,11 @@ else:
                 conn.commit()
                 conn.close()
                 st.rerun()
+        show_handover_board()
 
-        st.divider()
-        conn = sqlite3.connect(DB_FILE)
-        logs = conn.execute("SELECT engineer, message, timestamp FROM handover ORDER BY id DESC LIMIT 5").fetchall()
-        conn.close()
-        for l in logs:
-            st.markdown(f"""
-            <div class="handover-card">
-                <div style="font-size:0.8em; color:#666;">{l[2]}</div>
-                <div style="font-weight:bold; color:#ff4b4b; font-size:1.1em;">👷 {l[0]}</div>
-                <div style="margin-top:10px; font-size:1.05em;">{l[1]}</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-    with tab4:
-        st.subheader("Site Activity Log")
-        conn = sqlite3.connect(DB_FILE)
-        history = conn.execute("SELECT engineer, type, job, timestamp FROM history ORDER BY id DESC LIMIT 15").fetchall()
-        conn.close()
-        st.dataframe(history, use_container_width=True) # Makes it look more like a pro table
-
-    # Sidebar for logout
     with st.sidebar:
         st.title("⚙️ NotEMMA")
-        st.write(f"Logged in: **{st.session_state.current_user}**")
-        st.divider()
-        if st.button("🚪 LOGOUT", use_container_width=True):
+        st.write(f"User: {st.session_state.current_user}")
+        if st.button("🚪 LOGOUT"):
             st.session_state.on_shift = False
             st.rerun()
