@@ -1,6 +1,7 @@
 import streamlit as st
 import sqlite3
 import os
+import pandas as pd
 from datetime import datetime
 
 # --- PERMANENT DATABASE PATH ---
@@ -23,7 +24,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Helper function to show the board in multiple places
 def show_handover_board():
     st.divider()
     st.subheader("📋 Live Handover Board")
@@ -52,10 +52,10 @@ st.set_page_config(page_title="NotEMMA", page_icon="🏗️", layout="centered")
 st.markdown("""
     <style>
     .stApp { background-color: #f0f2f6; }
-    /* Force all labels and text to be dark navy */
     label, p, span, div { color: #1c3d5a !important; }
-    /* Fix for invisible numbers in inputs */
     input { color: #1c3d5a !important; font-weight: bold !important; }
+    /* Metric styling */
+    div[data-testid="stMetricValue"] { color: #ff4b4b !important; font-size: 32px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -63,7 +63,7 @@ st.markdown("""
 if 'on_shift' not in st.session_state:
     st.session_state.on_shift = False
 
-# --- VIEW 1: LANDING PAGE (Logged Out) ---
+# --- VIEW 1: LANDING PAGE ---
 if not st.session_state.on_shift:
     st.image("https://images.unsplash.com/photo-1581091226825-a6a2a5aee158?auto=format&fit=crop&q=80&w=800", use_container_width=True)
     st.title("🏗️ NotEMMA")
@@ -80,36 +80,44 @@ if not st.session_state.on_shift:
             else:
                 st.error("Invalid Credentials.")
     
-    # READ-ONLY BOARD FOR LANDING PAGE
     show_handover_board()
 
-# --- VIEW 2: DASHBOARD (Logged In) ---
+# --- VIEW 2: DASHBOARD ---
 else:
-    # Quick Stats
+    # --- DATA CALCULATIONS FOR TOP METRICS ---
     conn = sqlite3.connect(DB_FILE)
     today = datetime.now().strftime("%Y-%m-%d")
+    current_month = datetime.now().strftime("%Y-%m")
+    
     jobs_today = conn.execute("SELECT COUNT(*) FROM history WHERE timestamp LIKE ?", (f"{today}%",)).fetchone()[0]
+    
+    # Calculate Monthly OT for CURRENT user only
+    ot_query = conn.execute("SELECT SUM(hours) FROM overtime WHERE engineer = ? AND date LIKE ?", 
+                            (st.session_state.current_user, f"{current_month}%")).fetchone()[0]
+    monthly_ot = ot_query if ot_query else 0.0
     conn.close()
     
-    st.metric("Jobs Completed (Site Today)", jobs_today)
+    # --- TOP METRICS ---
+    m_col1, m_col2 = st.columns(2)
+    with m_col1:
+        st.metric("Jobs (Site Today)", jobs_today)
+    with m_col2:
+        st.metric("Your OT (This Month)", f"{monthly_ot} hrs")
 
-    tab1, tab2, tab3 = st.tabs(["⚡ TASKS", "⏰ OVERTIME", "📢 HANDOVER"])
+    st.divider()
+
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["⚡ TASKS", "⏰ OVERTIME", "📢 HANDOVER", "📜 HISTORY", "📞 SUPPORT"])
 
     with tab1:
         type_choice = st.radio("Priority", ["PPM", "Reactive"], horizontal=True)
-        if type_choice == "PPM":
-            tasks = ["DRUPS testing", "Flushing", "Fire Door Inspection", "Sprinkler testing"]
-        else:
-            tasks = ["Change light fitting", "Change lock", "Change flush plate"]
-            
+        tasks = ["DRUPS testing", "Flushing", "Fire Door Inspection", "Sprinkler testing"] if type_choice == "PPM" else ["Change light fitting", "Change lock", "Change flush plate"]
         selected_job = st.selectbox("Select Asset", tasks)
         
-        # --- SPECIFIC JOB HISTORY ---
+        # Specific Job History
         st.markdown(f"#### 📜 History for: {selected_job}")
         conn = sqlite3.connect(DB_FILE)
         job_history = conn.execute("SELECT engineer, action, notes, timestamp FROM history WHERE job = ? ORDER BY id DESC LIMIT 3", (selected_job,)).fetchall()
         conn.close()
-        
         if job_history:
             for jh in job_history:
                 st.markdown(f"**{jh[3]}** - {jh[0]}: *{jh[1]}* <br> {jh[2]}", unsafe_allow_html=True)
@@ -129,6 +137,7 @@ else:
             st.rerun()
 
     with tab2:
+        st.subheader("Log Overtime")
         ot_hours = st.number_input("Hours", min_value=0.0, step=0.5)
         ot_reason = st.text_input("Reason")
         if st.button("💾 SAVE"):
@@ -138,9 +147,11 @@ else:
             conn.commit()
             conn.close()
             st.balloons()
+            st.rerun()
 
     with tab3:
-        msg = st.text_area("Broadcast message")
+        st.subheader("Handover Update")
+        msg = st.text_area("Message for next shift")
         if st.button("📢 POST", use_container_width=True):
             if msg:
                 conn = sqlite3.connect(DB_FILE)
@@ -151,9 +162,28 @@ else:
                 st.rerun()
         show_handover_board()
 
+    with tab4:
+        st.subheader("Global Site Log (Full History)")
+        conn = sqlite3.connect(DB_FILE)
+        # Pulling the full history table
+        df = pd.read_sql_query("SELECT timestamp, engineer, type, job, action, notes FROM history ORDER BY id DESC", conn)
+        conn.close()
+        # Displaying as a professional Excel-like dataframe
+        st.dataframe(df, use_container_width=True)
+
+    with tab5:
+        st.subheader("📞 Support Contacts")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.info("**Helpdesk**\n\n0121 555 1234")
+            st.info("**Site Supervisor**\n\n07700 900 123")
+        with c2:
+            st.info("**TOMS Support**\n\n0800 123 4567")
+            st.info("**Security/Fire**\n\nExt 999")
+
     with st.sidebar:
         st.title("⚙️ NotEMMA")
-        st.write(f"User: {st.session_state.current_user}")
+        st.write(f"Logged in: **{st.session_state.current_user}**")
         if st.button("🚪 LOGOUT"):
             st.session_state.on_shift = False
             st.rerun()
